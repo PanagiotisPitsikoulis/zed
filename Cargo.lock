@@ -11156,6 +11156,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "native_bridge"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assets",
+ "async-channel 2.5.0",
+ "client",
+ "clock",
+ "collections",
+ "env_logger 0.11.8",
+ "fs",
+ "futures 0.3.34",
+ "gpui",
+ "gpui_platform",
+ "gpui_tokio",
+ "http_client",
+ "language",
+ "languages",
+ "log",
+ "lsp",
+ "lsp-types",
+ "node_runtime",
+ "path",
+ "paths",
+ "project",
+ "release_channel",
+ "reqwest_client",
+ "semver",
+ "serde",
+ "serde_json",
+ "settings",
+ "text",
+ "theme",
+ "theme_settings",
+ "tree-sitter-swift",
+ "util",
+ "watch",
+ "worktree",
+]
+
+[[package]]
 name = "nbformat"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -19021,6 +19062,16 @@ name = "tree-sitter-rust"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439e577dbe07423ec2582ac62c7531120dbfccfa6e5f92406f93dd271a120e45"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-swift"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d65aeb41726119416567d0333ec17580ac4abfb96db1f67c4bd638c65f9992fe"
 dependencies = [
  "cc",
  "tree-sitter-language",
