@@ -177,6 +177,20 @@ impl Bridge {
                 appearance,
                 ..
             } => self.set_user_settings(content, appearance, cx),
+            Request::ListDirectories { path, .. } => list_directories(path),
+            Request::CreateEntry { path, is_dir, .. } => {
+                cx.background_spawn(async move { create_entry(&path, is_dir) }).await
+            }
+            Request::MoveEntry { from, to, .. } => {
+                cx.background_spawn(async move { move_entry(&from, &to) }).await
+            }
+            Request::CopyEntry { from, to, .. } => {
+                cx.background_spawn(async move { copy_entry(&from, &to) }).await
+            }
+            Request::TrashEntry { path, .. } => {
+                cx.background_spawn(async move { trash_entry(&path) }).await
+            }
+            Request::Git { cwd, args, .. } => cx.background_spawn(async move { git(&cwd, &args) }).await,
         }
     }
 
@@ -706,4 +720,129 @@ fn hsla_to_hex(color: gpui::Hsla) -> String {
         (rgba.b * 255.0).round() as u8,
         (rgba.a * 255.0).round() as u8,
     )
+}
+
+fn list_directories(path: Option<String>) -> Result<Value> {
+    let home = std::env::var("HOME").context("HOME is not set")?;
+    let folder = path.unwrap_or_else(|| home.clone());
+    let mut directories = Vec::new();
+    for entry in std::fs::read_dir(&folder).with_context(|| format!("couldn't read {folder}"))? {
+        let entry = entry.with_context(|| format!("couldn't read an entry of {folder}"))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // Hidden folders (.cache, .git, .cargo …) would bury the projects a person is looking for.
+        if name.starts_with('.') {
+            continue;
+        }
+        // `file_type` doesn't follow symlinks; `metadata` does, so a linked project folder counts.
+        if std::fs::metadata(entry.path()).is_ok_and(|metadata| metadata.is_dir()) {
+            directories.push(name);
+        }
+    }
+    directories.sort_by_key(|name| name.to_lowercase());
+    Ok(json!({ "home": home, "path": folder, "directories": directories }))
+}
+
+fn create_entry(path: &str, is_dir: bool) -> Result<Value> {
+    let path = std::path::Path::new(path);
+    if path.exists() {
+        anyhow::bail!("“{}” already exists", path.display());
+    }
+    if is_dir {
+        std::fs::create_dir_all(path).with_context(|| format!("couldn't create {}", path.display()))?;
+    } else {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("couldn't create {}", parent.display()))?;
+        }
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .with_context(|| format!("couldn't create {}", path.display()))?;
+    }
+    Ok(json!({}))
+}
+
+fn move_entry(from: &str, to: &str) -> Result<Value> {
+    let target = std::path::Path::new(to);
+    if target.exists() {
+        anyhow::bail!("“{}” already exists", target.display());
+    }
+    std::fs::rename(from, target).with_context(|| format!("couldn't move {from} to {to}"))?;
+    Ok(json!({}))
+}
+
+fn copy_entry(from: &str, to: &str) -> Result<Value> {
+    let target = std::path::Path::new(to);
+    if target.exists() {
+        anyhow::bail!("“{}” already exists", target.display());
+    }
+    copy_recursively(std::path::Path::new(from), target)
+        .with_context(|| format!("couldn't copy {from} to {to}"))?;
+    Ok(json!({}))
+}
+
+fn copy_recursively(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    if std::fs::symlink_metadata(from)?.is_dir() {
+        std::fs::create_dir(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            copy_recursively(&entry.path(), &to.join(entry.file_name()))?;
+        }
+    } else {
+        std::fs::copy(from, to)?;
+    }
+    Ok(())
+}
+
+/// Moves `path` into the user's freedesktop Trash (`~/.local/share/Trash`), with the
+/// `.trashinfo` file managers read to restore it, so a deletion from a client stays undoable.
+fn trash_entry(path: &str) -> Result<Value> {
+    let source = std::path::Path::new(path);
+    let name = source
+        .file_name()
+        .with_context(|| format!("{path} has no name to trash it under"))?
+        .to_string_lossy()
+        .into_owned();
+    let data_home = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| std::path::Path::new(&home).join(".local/share")))
+        .context("HOME is not set")?;
+    let files = data_home.join("Trash/files");
+    let info = data_home.join("Trash/info");
+    std::fs::create_dir_all(&files).with_context(|| format!("couldn't create {}", files.display()))?;
+    std::fs::create_dir_all(&info).with_context(|| format!("couldn't create {}", info.display()))?;
+    let mut trashed_name = name.clone();
+    let mut attempt = 2;
+    while files.join(&trashed_name).exists() || info.join(format!("{trashed_name}.trashinfo")).exists() {
+        trashed_name = format!("{name}.{attempt}");
+        attempt += 1;
+    }
+    let deleted_at = std::process::Command::new("date")
+        .arg("+%Y-%m-%dT%H:%M:%S")
+        .output()
+        .ok()
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .unwrap_or_default();
+    std::fs::write(
+        info.join(format!("{trashed_name}.trashinfo")),
+        format!("[Trash Info]\nPath={path}\nDeletionDate={deleted_at}\n"),
+    )
+    .context("couldn't write the Trash entry")?;
+    std::fs::rename(source, files.join(&trashed_name))
+        .with_context(|| format!("couldn't move {path} to the Trash"))?;
+    Ok(json!({}))
+}
+
+fn git(cwd: &str, args: &[String]) -> Result<Value> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .with_context(|| format!("couldn't run git in {cwd}"))?;
+    Ok(json!({
+        "status": output.status.code().unwrap_or(-1),
+        "output": String::from_utf8_lossy(&output.stdout),
+        "error": String::from_utf8_lossy(&output.stderr),
+    }))
 }

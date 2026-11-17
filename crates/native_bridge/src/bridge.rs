@@ -17,8 +17,15 @@ pub fn run() {
     // Downloaded language servers and Node live under the app's own folder, apart from any
     // installed Zed's, so neither upgrades or deletes the other's.
     if let Some(home) = std::env::var_os("HOME") {
-        let data_dir = std::path::Path::new(&home)
-            .join("Library/Application Support/Pitsi Studio/Zed");
+        let data_dir = if cfg!(target_os = "macos") {
+            std::path::Path::new(&home).join("Library/Application Support/Pitsi Studio/Zed")
+        } else {
+            // On the dev box, where the engine serves Pitsi Studio over the network.
+            std::env::var_os("XDG_DATA_HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::Path::new(&home).join(".local/share"))
+                .join("pitsi-studio/zed")
+        };
         match std::fs::create_dir_all(&data_dir) {
             Ok(()) => {
                 paths::set_custom_data_dir(&data_dir.to_string_lossy());
@@ -55,6 +62,9 @@ pub fn run() {
                     break;
                 }
             }
+            // The client went away (stdin closed). Served one process per connection on the
+            // dev box, an engine left running here would outlive its window forever.
+            cx.update(|cx| cx.quit());
         })
         .detach();
     });

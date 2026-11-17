@@ -79,6 +79,41 @@ pub enum Request {
         content: String,
         appearance: Option<String>,
     },
+    /// The folders inside `path` (the engine's home folder when absent), for picking a folder
+    /// on the machine the engine runs on, which a client on another machine can't browse.
+    ListDirectories {
+        id: u64,
+        path: Option<String>,
+    },
+    /// File operations on the engine's machine, for a client that can't touch its disk: an
+    /// empty file or a folder, a move or rename, a copy (files and folders), and a move to the
+    /// freedesktop Trash. Paths are absolute; nothing is overwritten.
+    CreateEntry {
+        id: u64,
+        path: String,
+        is_dir: bool,
+    },
+    MoveEntry {
+        id: u64,
+        from: String,
+        to: String,
+    },
+    CopyEntry {
+        id: u64,
+        from: String,
+        to: String,
+    },
+    TrashEntry {
+        id: u64,
+        path: String,
+    },
+    /// Runs `git` with `args` in `cwd` on the engine's machine: the status, branch and staging
+    /// the client shows for a project it can't run git on itself.
+    Git {
+        id: u64,
+        cwd: String,
+        args: Vec<String>,
+    },
 }
 
 impl Request {
@@ -98,7 +133,13 @@ impl Request {
             | Request::Hover { id, .. }
             | Request::Diagnostics { id, .. }
             | Request::SettingsSchema { id, .. }
-            | Request::SetUserSettings { id, .. } => *id,
+            | Request::SetUserSettings { id, .. }
+            | Request::ListDirectories { id, .. }
+            | Request::CreateEntry { id, .. }
+            | Request::MoveEntry { id, .. }
+            | Request::CopyEntry { id, .. }
+            | Request::TrashEntry { id, .. }
+            | Request::Git { id, .. } => *id,
         }
     }
 }
